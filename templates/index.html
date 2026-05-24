@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto Mailer | Premium Outreach</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Auto Mailer</h1>
+                <p style="color: var(--text-muted); font-size: 0.875rem;">Premium Outreach Engine</p>
+            </div>
+            <div id="app-status-badge" class="badge badge-idle">Idle</div>
+        </header>
+
+        <div class="dashboard-grid">
+            <!-- Sidebar: Setup -->
+            <aside>
+                <div class="card">
+                    <h2><i data-lucide="settings"></i> Configuration</h2>
+                    <form id="campaign-form" enctype="multipart/form-data">
+                        <div class="form-group">
+                            <label>Sender Gmail</label>
+                            <input name="from_email" type="email" required value="{{ defaults.get('from_email', '') }}" placeholder="you@gmail.com" />
+                        </div>
+                        <div class="form-group">
+                            <label>App Password</label>
+                            <input name="app_password" type="password" required placeholder="16-char app password" />
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label>Hourly Limit</label>
+                                <input name="hourly_limit" type="number" min="1" required value="{{ defaults.get('hourly_limit', '20') }}" />
+                            </div>
+                            <div class="form-group">
+                                <label>Daily Limit</label>
+                                <input name="daily_limit" type="number" min="1" required value="{{ defaults.get('daily_limit', '100') }}" />
+                            </div>
+                        </div>
+                        <div class="grid-2">
+                            <div class="form-group">
+                                <label>Window Start</label>
+                                <input name="window_start" value="{{ defaults.get('window_start', '09:00') }}" />
+                            </div>
+                            <div class="form-group">
+                                <label>Window End</label>
+                                <input name="window_end" value="{{ defaults.get('window_end', '17:00') }}" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Batch ID</label>
+                            <input name="batch_id" id="batch_id_input" value="{{ defaults.get('batch_id', '') }}" />
+                        </div>
+                        <div class="form-group">
+                            <label>Subject Template</label>
+                            <input name="subject_template" required value="{{ defaults.get('subject_template', '') }}" />
+                        </div>
+                        <div class="form-group">
+                            <label>Body Template</label>
+                            <textarea name="body_template" rows="5" required>{{ defaults.get('body_template', '') }}</textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Recipients CSV</label>
+                            <input name="recipients_csv" type="file" accept=".csv" required />
+                        </div>
+                        <div class="form-group">
+                            <label>Attachments (Optional)</label>
+                            <input name="attachments" type="file" multiple />
+                        </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
+                            <input name="consent_required" type="checkbox" style="width: auto; margin: 0;" {% if defaults.get('consent_required', 'on') in ['on', True, 'true'] %}checked{% endif %} />
+                            <label style="margin: 0;">Require <code>consent=true</code></label>
+                        </div>
+                        
+                        <div class="grid-2" style="margin-top: 1.5rem;">
+                            <button type="button" id="preview-btn" class="btn-secondary">Preview</button>
+                            <button type="submit" id="start-btn" class="btn-primary">Start</button>
+                        </div>
+                        <button type="button" id="stop-btn" class="btn-danger" style="margin-top: 0.5rem; display: none;">Stop Campaign</button>
+                    </form>
+                </div>
+            </aside>
+
+            <!-- Main Content -->
+            <main>
+                <!-- Countdown -->
+                <div id="countdown-container" class="countdown-box" style="display: none;">
+                    <p class="stat-label">Next mail in</p>
+                    <div id="countdown-timer" class="countdown-timer">00:00</div>
+                    <p id="next-recipient-hint" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;"></p>
+                </div>
+
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="card stat-card">
+                        <div class="stat-label">Sent</div>
+                        <div id="stat-sent" class="stat-value">0</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-label">Remaining</div>
+                        <div id="stat-remaining" class="stat-value">0</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-label">Failed</div>
+                        <div id="stat-failed" class="stat-value">0</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-label">Progress</div>
+                        <div id="stat-progress-pct" class="stat-value">0%</div>
+                    </div>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="card progress-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2><i data-lucide="bar-chart-3"></i> Live Progress</h2>
+                        <span id="current-task-text" style="font-size: 0.875rem; color: var(--text-muted);">Idle</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                    </div>
+                </div>
+
+                <!-- Tabs & Lists -->
+                <div class="card">
+                    <div class="tabs">
+                        <div class="tab active" onclick="switchTab('queue')">Queue</div>
+                        <div class="tab" onclick="switchTab('sent')">Sent</div>
+                        <div class="tab" onclick="switchTab('failed')">Failed</div>
+                        <div class="tab" onclick="switchTab('preview-tab')">Preview</div>
+                    </div>
+
+                    <div id="tab-queue" class="tab-content recipient-list"></div>
+                    <div id="tab-sent" class="tab-content recipient-list" style="display: none;"></div>
+                    <div id="tab-failed" class="tab-content recipient-list" style="display: none;"></div>
+                    <div id="tab-preview-tab" class="tab-content recipient-list" style="display: none;">
+                        <p id="preview-placeholder" style="color: var(--text-muted); font-size: 0.875rem; padding: 1rem;">No preview loaded.</p>
+                        <div id="preview-items"></div>
+                    </div>
+                </div>
+
+                <!-- Logs -->
+                <div class="card" style="margin-top: 2rem;">
+                    <h2><i data-lucide="terminal"></i> Activity Log</h2>
+                    <div id="log-container"></div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        let currentBatchId = "";
+        let isRunning = false;
+        let countdownInterval = null;
+
+        const form = document.getElementById('campaign-form');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const previewBtn = document.getElementById('preview-btn');
+
+        // Form Submit
+        form.onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(form);
+            currentBatchId = formData.get('batch_id') || `batch-${Date.now()}`;
+            
+            try {
+                const res = await fetch("/start", { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("Campaign started successfully", "success");
+                    isRunning = true;
+                    updateUIState();
+                } else {
+                    showToast(data.error, "error");
+                }
+            } catch (err) {
+                showToast("Failed to start: " + err, "error");
+            }
+        };
+
+        // Stop
+        stopBtn.onclick = async () => {
+            try {
+                const res = await fetch("/stop", { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("Stop signal sent", "warning");
+                } else {
+                    showToast(data.error, "error");
+                }
+            } catch (err) {
+                showToast("Failed to stop: " + err, "error");
+            }
+        };
+
+        // Preview
+        previewBtn.onclick = async () => {
+            const formData = new FormData(form);
+            try {
+                const res = await fetch("/preview", { method: 'POST', body: formData });
+                const data = await res.json();
+                if (data.success) {
+                    renderPreview(data.preview);
+                    switchTab('preview-tab');
+                } else {
+                    showToast(data.error, "error");
+                }
+            } catch (err) {
+                showToast("Preview failed: " + err, "error");
+            }
+        };
+
+        function renderPreview(items) {
+            const container = document.getElementById('preview-items');
+            document.getElementById('preview-placeholder').style.display = 'none';
+            container.innerHTML = items.map(item => `
+                <div class="recipient-item" style="flex-direction: column; align-items: flex-start; gap: 0.5rem;">
+                    <div><strong>To:</strong> ${item.to}</div>
+                    <div><strong>Subject:</strong> ${item.subject}</div>
+                    <div style="width: 100%; padding: 0.5rem; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap;">${item.body}</div>
+                </div>
+            `).join('');
+        }
+
+        async function refreshStatus() {
+            try {
+                const res = await fetch("/status");
+                const data = await res.json();
+                
+                isRunning = data.running;
+                updateUIState();
+
+                // Update Status Badge
+                const badge = document.getElementById('app-status-badge');
+                badge.className = `badge badge-${data.status || 'idle'}`;
+                badge.textContent = data.status || 'Idle';
+
+                // Update Stats
+                document.getElementById('stat-sent').textContent = data.sent_count || 0;
+                document.getElementById('stat-failed').textContent = data.failed_count || 0;
+                document.getElementById('stat-remaining').textContent = (data.total_to_send || 0) - (data.sent_count || 0) - (data.failed_count || 0) - (data.skipped_count || 0);
+                
+                const pct = data.total_to_send > 0 ? Math.round(((data.sent_count + data.failed_count + data.skipped_count) / data.total_to_send) * 100) : 0;
+                document.getElementById('stat-progress-pct').textContent = `${pct}%`;
+                document.getElementById('progress-bar-fill').style.width = `${pct}%`;
+
+                // Current Task
+                const taskText = document.getElementById('current-task-text');
+                if (data.status === 'running') {
+                    taskText.textContent = `Sending to: ${data.current_recipient || '...'}`;
+                } else if (data.status === 'sleeping') {
+                    taskText.textContent = `Delaying until ${new Date(data.next_send_at).toLocaleTimeString()}`;
+                } else {
+                    taskText.textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
+                }
+
+                // Countdown
+                if (data.next_send_at) {
+                    startCountdown(data.next_send_at);
+                    document.getElementById('next-recipient-hint').textContent = data.current_recipient ? `Next up: ${data.current_recipient}` : "";
+                } else {
+                    document.getElementById('countdown-container').style.display = 'none';
+                }
+
+                // Logs
+                const logContainer = document.getElementById('log-container');
+                logContainer.innerHTML = (data.logs || []).map(line => `<div class="log-line">${line}</div>`).join('');
+                logContainer.scrollTop = logContainer.scrollHeight;
+
+                // Load recipient list periodically if running
+                if (data.running && data.last_config && data.last_config.batch_id) {
+                    currentBatchId = data.last_config.batch_id;
+                    refreshRecipients();
+                }
+
+            } catch (err) {
+                console.error("Status refresh failed", err);
+            }
+        }
+
+        async function refreshRecipients() {
+            if (!currentBatchId) return;
+            try {
+                const res = await fetch(`/recipients?batch_id=${currentBatchId}`);
+                const data = await res.json();
+                if (data.success) {
+                    renderRecipientLists(data.recipients);
+                }
+            } catch (err) {
+                console.error("Recipients refresh failed", err);
+            }
+        }
+
+        function renderRecipientLists(recipients) {
+            const queueList = document.getElementById('tab-queue');
+            const sentList = document.getElementById('tab-sent');
+            const failedList = document.getElementById('tab-failed');
+
+            const queueHtml = recipients.filter(r => r.status === 'pending').map(r => `
+                <div class="recipient-item">
+                    <span><span class="status-dot dot-pending"></span>${r.email}</span>
+                    <span style="color: var(--text-muted);">Waiting</span>
+                </div>
+            `).join('');
+
+            const sentHtml = recipients.filter(r => r.status === 'sent').map(r => `
+                <div class="recipient-item">
+                    <span><span class="status-dot dot-sent"></span>${r.email}</span>
+                    <span style="color: var(--success);">${new Date(r.sent_at).toLocaleTimeString()}</span>
+                </div>
+            `).join('');
+
+            const failedHtml = recipients.filter(r => r.status === 'failed').map(r => `
+                <div class="recipient-item" title="${r.error || ''}">
+                    <span><span class="status-dot dot-failed"></span>${r.email}</span>
+                    <span style="color: var(--danger);">Failed</span>
+                </div>
+            `).join('');
+
+            queueList.innerHTML = queueHtml || '<p style="padding:1rem; color:var(--text-muted);">Empty</p>';
+            sentList.innerHTML = sentHtml || '<p style="padding:1rem; color:var(--text-muted);">None yet</p>';
+            failedList.innerHTML = failedHtml || '<p style="padding:1rem; color:var(--text-muted);">None yet</p>';
+        }
+
+        function startCountdown(targetIso) {
+            const container = document.getElementById('countdown-container');
+            const timer = document.getElementById('countdown-timer');
+            container.style.display = 'block';
+
+            if (countdownInterval) clearInterval(countdownInterval);
+
+            const target = new Date(targetIso).getTime();
+            
+            function update() {
+                const now = new Date().getTime();
+                const diff = target - now;
+                if (diff <= 0) {
+                    timer.textContent = "00:00";
+                    clearInterval(countdownInterval);
+                    return;
+                }
+                const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const secs = Math.floor((diff % (1000 * 60)) / 1000);
+                timer.textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+            update();
+            countdownInterval = setInterval(update, 1000);
+        }
+
+        function updateUIState() {
+            if (isRunning) {
+                startBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+                previewBtn.disabled = true;
+                // Disable inputs
+                form.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => el.disabled = true);
+            } else {
+                startBtn.style.display = 'block';
+                stopBtn.style.display = 'none';
+                previewBtn.disabled = false;
+                form.querySelectorAll('input, textarea, select').forEach(el => el.disabled = false);
+            }
+        }
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            document.getElementById(`tab-${tabId}`).style.display = 'block';
+            document.querySelector(`.tab[onclick="switchTab('${tabId}')"]`).classList.add('active');
+        }
+
+        function showToast(msg, type) {
+            // Simple alert for now, can be improved to a real toast
+            console.log(`[${type}] ${msg}`);
+            // alert(msg);
+        }
+
+        setInterval(refreshStatus, 3000);
+        refreshStatus();
+    </script>
+</body>
+</html>
